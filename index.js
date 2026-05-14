@@ -301,7 +301,7 @@ async function cmdHelp(replyTarget) {
 }
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', version: '4fe0a5c', imageMethod: 'axios-direct' }));
 
 // ─── API Endpoints สำหรับ Dashboard ──────────────────────────────────────────
 app.use(express.json());
