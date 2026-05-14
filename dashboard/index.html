@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expense Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; }
+    header {
+      background: #06c755;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    }
+    header h1 { font-size: 1.3rem; }
+    .badge {
+      background: rgba(255,255,255,.25);
+      border-radius: 99px;
+      font-size: .75rem;
+      padding: 2px 10px;
+    }
+    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .card .label { font-size: .8rem; color: #888; margin-bottom: 8px; }
+    .card .value { font-size: 1.8rem; font-weight: 700; color: #06c755; }
+    .card .sub { font-size: .85rem; color: #555; margin-top: 4px; }
+    .section { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }
+    .section h2 { font-size: 1rem; margin-bottom: 14px; color: #444; border-left: 3px solid #06c755; padding-left: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th { text-align: left; padding: 8px 10px; background: #f7f8fa; color: #666; font-weight: 600; border-bottom: 2px solid #eee; }
+    td { padding: 9px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .amount { font-weight: 700; color: #06c755; }
+    .badge-live {
+      display: inline-block;
+      width: 8px; height: 8px;
+      background: #06c755;
+      border-radius: 50%;
+      margin-right: 6px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50% { opacity: .3; }
+    }
+    .tag { background: #e8f8ee; color: #06c755; border-radius: 6px; padding: 2px 8px; font-size: .78rem; }
+    .empty { text-align: center; color: #aaa; padding: 30px; }
+    #toast {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: #06c755;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      display: none;
+      z-index: 999;
+      font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:1.5rem">🧾</span>
+  <h1>Expense Dashboard</h1>
+  <span class="badge"><span class="badge-live"></span>Realtime</span>
+</header>
+
+<div class="container">
+  <!-- Metric Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="label">💰 ยอดรวมเดือนนี้</div>
+      <div class="value" id="total">0</div>
+      <div class="sub">บาท</div>
+    </div>
+    <div class="card">
+      <div class="label">📋 จำนวนรายการ</div>
+      <div class="value" id="count">0</div>
+      <div class="sub">รายการ</div>
+    </div>
+    <div class="card">
+      <div class="label">🏆 ใช้มากสุด</div>
+      <div class="value" id="topUser" style="font-size:1.1rem;margin-top:4px">—</div>
+      <div class="sub" id="topAmount"></div>
+    </div>
+  </div>
+
+  <!-- Latest Expenses -->
+  <div class="section">
+    <h2>รายการล่าสุด</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>เวลา</th>
+          <th>ชื่อ</th>
+          <th>ร้าน</th>
+          <th>รายการ</th>
+          <th>ยอด (บาท)</th>
+        </tr>
+      </thead>
+      <tbody id="expenseTable">
+        <tr><td colspan="5" class="empty">กำลังโหลด...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Summary per person -->
+  <div class="section">
+    <h2>สรุปรายคน (เดือนนี้)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>ชื่อ</th>
+          <th>จำนวนครั้ง</th>
+          <th>ยอดรวม (บาท)</th>
+        </tr>
+      </thead>
+      <tbody id="summaryTable">
+        <tr><td colspan="4" class="empty">กำลังโหลด...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ─── Supabase config ─────────────────────────────────────────────────────────
+  const SUPABASE_URL = 'https://sopycdhltyfhlgibsdcb.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_6T4LV1qhW0iR_jm6_mghAw_PsVULgGs';
+  const { createClient } = supabase;
+  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────────
+  function currentMonthRange() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    return { from: `${y}-${m}-01`, to: `${y}-${m}-31` };
+  }
+
+  function fmtMoney(n) {
+    return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 3500);
+  }
+
+  // ─── Load & Render ────────────────────────────────────────────────────────────
+  async function loadData() {
+    const { from, to } = currentMonthRange();
+
+    const { data, error } = await db
+      .from('expenses')
+      .select('*')
+      .gte('expense_date', from)
+      .lte('expense_date', to)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error:', error.message);
+      return;
+    }
+
+    renderMetrics(data);
+    renderExpenses(data);
+    renderSummary(data);
+  }
+
+  function renderMetrics(data) {
+    const total = data.reduce((s, r) => s + (r.amount || 0), 0);
+    document.getElementById('total').textContent = fmtMoney(total);
+    document.getElementById('count').textContent = data.length;
+
+    // คนที่ใช้มากสุด
+    const summaryMap = {};
+    data.forEach((r) => {
+      const name = r.display_name || r.line_user_id || 'Unknown';
+      if (!summaryMap[name]) summaryMap[name] = 0;
+      summaryMap[name] += r.amount || 0;
+    });
+    const sorted = Object.entries(summaryMap).sort((a, b) => b[1] - a[1]);
+    if (sorted.length) {
+      document.getElementById('topUser').textContent = sorted[0][0];
+      document.getElementById('topAmount').textContent = fmtMoney(sorted[0][1]) + ' บาท';
+    }
+  }
+
+  function renderExpenses(data) {
+    const tbody = document.getElementById('expenseTable');
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">ยังไม่มีรายการ</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.slice(0, 50).map((r) => {
+      const items = Array.isArray(r.items) ? r.items.join(', ') : (r.items || '—');
+      return `<tr>
+        <td>${fmtTime(r.created_at)}</td>
+        <td>${r.display_name || '—'}</td>
+        <td><span class="tag">${r.shop_name || '—'}</span></td>
+        <td style="max-width:220px;word-break:break-word">${items}</td>
+        <td class="amount">${fmtMoney(r.amount)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderSummary(data) {
+    const summaryMap = {};
+    data.forEach((r) => {
+      const name = r.display_name || r.line_user_id || 'Unknown';
+      if (!summaryMap[name]) summaryMap[name] = { total: 0, count: 0 };
+      summaryMap[name].total += r.amount || 0;
+      summaryMap[name].count += 1;
+    });
+
+    const sorted = Object.entries(summaryMap).sort((a, b) => b[1].total - a[1].total);
+    const tbody = document.getElementById('summaryTable');
+
+    if (!sorted.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">ยังไม่มีรายการ</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = sorted.map(([name, s], i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${name}</td>
+      <td>${s.count}</td>
+      <td class="amount">${fmtMoney(s.total)}</td>
+    </tr>`).join('');
+  }
+
+  // ─── Realtime ─────────────────────────────────────────────────────────────────
+  db.channel('expenses-changes')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'expenses' }, (payload) => {
+      console.log('Realtime INSERT:', payload.new);
+      showToast(`🧾 ${payload.new.display_name || 'Someone'} เพิ่งบันทึกค่าใช้จ่าย ${fmtMoney(payload.new.amount)} บาท`);
+      loadData();
+    })
+    .subscribe();
+
+  // ─── Init ─────────────────────────────────────────────────────────────────────
+  loadData();
+  // Refresh ทุก 60 วินาที ป้องกัน realtime หลุด
+  setInterval(loadData, 60000);
+</script>
+</body>
+</html>
