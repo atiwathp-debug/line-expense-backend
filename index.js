@@ -63,15 +63,21 @@ async function handleEvent(event) {
 async function handleImageMessage(event, userId, groupId, replyTarget) {
   console.log('[INFO] Image received — userId:', userId);
 
-  // ดึงรูปจาก LINE ผ่าน BlobClient (SDK v9)
+  // ดึงรูปจาก LINE ผ่าน axios โดยตรง (reliable กว่า SDK wrapper)
   let imageBase64;
   try {
-    const blob = await lineBlobClient.getMessageContent(event.message.id);
-    const arrayBuffer = await blob.arrayBuffer();
-    imageBase64 = Buffer.from(arrayBuffer).toString('base64');
-    console.log('[INFO] Image downloaded — size:', arrayBuffer.byteLength, 'bytes');
+    const response = await axios.get(
+      `https://api-data.line.me/v2/bot/message/${event.message.id}/content`,
+      {
+        headers: { Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}` },
+        responseType: 'arraybuffer',
+        timeout: 10000,
+      }
+    );
+    imageBase64 = Buffer.from(response.data).toString('base64');
+    console.log('[INFO] Image downloaded — size:', response.data.byteLength, 'bytes');
   } catch (err) {
-    console.error('[ERROR] getMessageContent:', err.message, err.stack);
+    console.error('[ERROR] download image:', err.response?.status, err.message);
     await pushText(replyTarget, 'ไม่สามารถดาวน์โหลดรูปได้ กรุณาลองใหม่');
     return;
   }
