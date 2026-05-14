@@ -93,7 +93,7 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
   }
 
   if (parsed.error === 'not_receipt') {
-    await pushText(replyTarget, 'รูปนี้ไม่ใช่ใบเสร็จ กรุณาส่งรูปใบเสร็จ');
+    await pushText(replyTarget, 'ไม่พบข้อมูลการจ่ายเงินในรูปนี้\nกรุณาส่งรูปใบเสร็จ, สลิปโอนเงิน หรือบิลค่าใช้จ่าย');
     return;
   }
 
@@ -151,9 +151,11 @@ async function analyzeReceiptWithGemini(imageBase64, retryCount = 0) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
   const prompt =
-    'วิเคราะห์ใบเสร็จในรูปนี้ แล้วตอบ JSON เท่านั้น (ไม่ต้องมี markdown) ' +
-    'ในรูปแบบ: {"shop_name":"ชื่อร้าน","items":["รายการ1","รายการ2"],"amount":"ยอดรวม","date":"YYYY-MM-DD","raw_text":"ข้อความในใบเสร็จ"} ' +
-    'ถ้ารูปไม่ใช่ใบเสร็จให้ตอบ {"error":"not_receipt"}';
+    'วิเคราะห์รูปนี้ว่าเป็นเอกสารการจ่ายเงินหรือไม่ เช่น ใบเสร็จ, สลิปโอนเงิน, สลิปธนาคาร, QR payment, บิลค่าใช้จ่าย, invoice ทุกประเภท ' +
+    'ถ้าใช่ให้ตอบ JSON เท่านั้น (ห้ามมี markdown หรือ ```): ' +
+    '{"shop_name":"ชื่อร้านหรือชื่อผู้รับเงิน","items":["รายการ1","รายการ2"],"amount":"ยอดเงินรวม (ตัวเลขเท่านั้น)","date":"YYYY-MM-DD","raw_text":"ข้อความสำคัญในภาพ"} ' +
+    'สำหรับสลิปโอนเงิน: shop_name คือชื่อผู้รับ, items คือ ["โอนเงิน"] ' +
+    'ถ้ารูปไม่เกี่ยวกับการจ่ายเงินเลย ให้ตอบ {"error":"not_receipt"}';
 
   try {
     const { data } = await axios.post(url, {
