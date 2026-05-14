@@ -18,6 +18,9 @@ const lineConfig = {
 const lineClient = new line.messagingApi.MessagingApiClient({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
 });
+const lineBlobClient = new line.messagingApi.MessagingApiBlobClient({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+});
 
 // ─── Supabase Client ──────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -60,15 +63,15 @@ async function handleEvent(event) {
 async function handleImageMessage(event, userId, groupId, replyTarget) {
   console.log('[INFO] Image received — userId:', userId);
 
-  // ดึงรูปจาก LINE
+  // ดึงรูปจาก LINE ผ่าน BlobClient (SDK v9)
   let imageBase64;
   try {
-    const stream = await lineClient.getMessageContent(event.message.id);
-    const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
-    imageBase64 = Buffer.concat(chunks).toString('base64');
+    const blob = await lineBlobClient.getMessageContent(event.message.id);
+    const arrayBuffer = await blob.arrayBuffer();
+    imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+    console.log('[INFO] Image downloaded — size:', arrayBuffer.byteLength, 'bytes');
   } catch (err) {
-    console.error('[ERROR] getMessageContent:', err.message);
+    console.error('[ERROR] getMessageContent:', err.message, err.stack);
     await pushText(replyTarget, 'ไม่สามารถดาวน์โหลดรูปได้ กรุณาลองใหม่');
     return;
   }
