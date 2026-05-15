@@ -236,7 +236,9 @@ async function uploadReceiptImage(imageBuffer, userId) {
 
 // ─── Save expense to Supabase and send confirmation ──────────────────────────
 async function saveExpense(expenseData, replyTarget, displayName, parsed) {
-  const { error: dbError } = await supabase.from('expenses').insert(expenseData);
+  // ดึง _projectName ออกก่อน insert (ไม่มีคอลัมน์นี้ใน DB)
+  const { _projectName, ...dbData } = expenseData;
+  const { error: dbError } = await supabase.from('expenses').insert(dbData);
 
   if (dbError) {
     console.error('[ERROR] Supabase insert:', dbError.message);
