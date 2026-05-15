@@ -25,10 +25,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// ─── In-memory pending expense store ─────────────────────────────────────────
-// Key: line_user_id
-// Value: { expense, imageUrl, replyTarget, groupId, displayName }
+// ─── In-memory stores ────────────────────────────────────────────────────────
+// pendingExpenses: รอ user เลือก project
+// Key: line_user_id → { expense, replyTarget, displayName, parsed }
 const pendingExpenses = new Map();
+
+// pendingNewProject: รอ user พิมพ์ชื่อ project ใหม่
+// Key: line_user_id → { expense, replyTarget, displayName, parsed }
+const pendingNewProject = new Map();
 
 // ─── Webhook (LINE signature verification) ───────────────────────────────────
 app.post(
@@ -157,15 +161,25 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
   });
 
   // สร้าง Quick Reply buttons (LINE รองรับสูงสุด 13 items)
-  const maxProjectButtons = 12; // เผื่อ 1 slot สำหรับ "ไม่ระบุ Project"
+  // เผื่อ 2 slots: "➕ สร้าง Project ใหม่" + "ไม่ระบุ Project"
+  const maxProjectButtons = 11;
   const projectButtons = projects.slice(0, maxProjectButtons).map((p) => ({
     type: 'action',
     action: {
       type: 'message',
-      label: `📁 ${p.name}`.substring(0, 20), // LINE label max 20 chars
+      label: `📁 ${p.name}`.substring(0, 20),
       text: `📁 ${p.name}`,
     },
   }));
+
+  projectButtons.push({
+    type: 'action',
+    action: {
+      type: 'message',
+      label: '➕ สร้าง Project ใหม่',
+      text: '➕ สร้าง Project ใหม่',
+    },
+  });
 
   projectButtons.push({
     type: 'action',
@@ -217,6 +231,7 @@ async function uploadReceiptImage(imageBuffer, userId) {
   try {
     await axios.post(uploadUrl, imageBuffer, {
       headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
         Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
         'Content-Type': 'image/jpeg',
         'x-upsert': 'true',
@@ -313,7 +328,24 @@ async function handleTextMessage(event, userId, groupId, replyTarget) {
   const rawText = event.message.text.trim();
   const text = rawText.toLowerCase();
 
-  // ตรวจสอบว่า user กำลังเลือก project สำหรับ pending expense
+  // 1) รอ user พิมพ์ชื่อ project ใหม่ (กด "➕ สร้าง Project ใหม่" ไปแล้ว)
+  if (pendingNewProject.has(userId)) {
+    await handleNewProjectName(userId, rawText, replyTarget);
+    return;
+  }
+
+  // 2) user กด "➕ สร้าง Project ใหม่" จาก Quick Reply
+  if (rawText === '➕ สร้าง Project ใหม่') {
+    const pending = pendingExpenses.get(userId);
+    if (pending) {
+      pendingNewProject.set(userId, pending);
+      pendingExpenses.delete(userId);
+      await pushText(replyTarget, '📝 พิมพ์ชื่อ Project ที่ต้องการสร้าง:');
+    }
+    return;
+  }
+
+  // 3) user เลือก project จาก Quick Reply
   if (rawText === 'ไม่ระบุ Project' || rawText.startsWith('📁 ')) {
     await handleProjectSelection(userId, rawText);
     return;
@@ -369,6 +401,48 @@ async function handleProjectSelection(userId, text) {
 
   await saveExpense(
     { ...expense, project_id: projectId, _projectName: projectName },
+    replyTarget,
+    displayName,
+    parsed
+  );
+}
+
+// ─── New project name handler (after user typed name) ────────────────────────
+async function handleNewProjectName(userId, projectName, replyTarget) {
+  const pending = pendingNewProject.get(userId);
+  pendingNewProject.delete(userId);
+
+  if (!pending) return;
+
+  const { expense, displayName, parsed } = pending;
+
+  // สร้าง project ใหม่
+  const { data: newProject, error: createError } = await supabase
+    .from('projects')
+    .insert({ name: projectName, color: '#06c755' })
+    .select('id, name')
+    .single();
+
+  if (createError) {
+    console.error('[ERROR] create project:', createError.message);
+    // ถ้า duplicate name
+    if (createError.code === '23505') {
+      await pushText(replyTarget, `⚠️ Project "${projectName}" มีอยู่แล้ว\nกำลังบันทึกค่าใช้จ่ายภายใต้ Project นี้...`);
+      // หา project ที่มีอยู่แล้ว
+      const { data: existing } = await supabase
+        .from('projects').select('id, name').eq('name', projectName).single();
+      if (existing) {
+        await saveExpense({ ...expense, project_id: existing.id, _projectName: existing.name }, replyTarget, displayName, parsed);
+        return;
+      }
+    }
+    await pushText(replyTarget, 'สร้าง Project ไม่สำเร็จ กรุณาลองใหม่');
+    return;
+  }
+
+  console.log('[INFO] Created project:', newProject.name);
+  await saveExpense(
+    { ...expense, project_id: newProject.id, _projectName: newProject.name },
     replyTarget,
     displayName,
     parsed
