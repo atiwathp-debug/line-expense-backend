@@ -139,18 +139,16 @@
 <div id="toast"></div>
 
 <script>
-  // ─── Supabase config ─────────────────────────────────────────────────────────
-  const SUPABASE_URL = 'https://sopycdhltyfhlgibsdcb.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_6T4LV1qhW0iR_jm6_mghAw_PsVULgGs';
-  const { createClient } = supabase;
-  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // ─── API base (ดึงข้อมูลจาก Railway backend — ใช้ Service Key ฝั่ง server) ────
+  const API_BASE = window.location.origin;
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
-  function currentMonthRange() {
+  function currentYearMonth() {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    return { from: `${y}-${m}-01`, to: `${y}-${m}-31` };
+    return {
+      year: now.getFullYear(),
+      month: now.getMonth() + 1,
+    };
   }
 
   function fmtMoney(n) {
@@ -171,42 +169,49 @@
   }
 
   // ─── Load & Render ────────────────────────────────────────────────────────────
+  let lastCount = 0;
+
   async function loadData() {
-    const { from, to } = currentMonthRange();
+    const { year, month } = currentYearMonth();
 
-    const { data, error } = await db
-      .from('expenses')
-      .select('*')
-      .gte('expense_date', from)
-      .lte('expense_date', to)
-      .order('created_at', { ascending: false });
+    try {
+      // ดึงรายการทั้งหมดจาก Railway API (ใช้ Service Key ฝั่ง server)
+      const [expRes, sumRes] = await Promise.all([
+        fetch(`${API_BASE}/api/expenses?year=${year}&month=${month}`),
+        fetch(`${API_BASE}/api/summary`),
+      ]);
 
-    if (error) {
-      console.error('Supabase error:', error.message);
-      return;
+      const expenses = await expRes.json();
+      const summary  = await sumRes.json();
+
+      if (!Array.isArray(expenses)) { console.error('API error:', expenses); return; }
+
+      // แจ้งเตือน realtime เมื่อมีรายการใหม่
+      if (lastCount > 0 && expenses.length > lastCount) {
+        const newest = expenses[0];
+        showToast(`🧾 ${newest.display_name || 'Someone'} เพิ่งบันทึก ${fmtMoney(newest.amount)} บาท`);
+      }
+      lastCount = expenses.length;
+
+      renderMetrics(expenses, summary);
+      renderExpenses(expenses);
+      renderSummary(summary);
+    } catch (err) {
+      console.error('loadData error:', err);
     }
-
-    renderMetrics(data);
-    renderExpenses(data);
-    renderSummary(data);
   }
 
-  function renderMetrics(data) {
-    const total = data.reduce((s, r) => s + (r.amount || 0), 0);
+  function renderMetrics(expenses, summary) {
+    const total = expenses.reduce((s, r) => s + (r.amount || 0), 0);
     document.getElementById('total').textContent = fmtMoney(total);
-    document.getElementById('count').textContent = data.length;
+    document.getElementById('count').textContent = expenses.length;
 
-    // คนที่ใช้มากสุด
-    const summaryMap = {};
-    data.forEach((r) => {
-      const name = r.display_name || r.line_user_id || 'Unknown';
-      if (!summaryMap[name]) summaryMap[name] = 0;
-      summaryMap[name] += r.amount || 0;
-    });
-    const sorted = Object.entries(summaryMap).sort((a, b) => b[1] - a[1]);
-    if (sorted.length) {
-      document.getElementById('topUser').textContent = sorted[0][0];
-      document.getElementById('topAmount').textContent = fmtMoney(sorted[0][1]) + ' บาท';
+    if (summary && summary.length) {
+      document.getElementById('topUser').textContent = summary[0].name;
+      document.getElementById('topAmount').textContent = fmtMoney(summary[0].total) + ' บาท';
+    } else {
+      document.getElementById('topUser').textContent = '—';
+      document.getElementById('topAmount').textContent = '';
     }
   }
 
@@ -228,44 +233,24 @@
     }).join('');
   }
 
-  function renderSummary(data) {
-    const summaryMap = {};
-    data.forEach((r) => {
-      const name = r.display_name || r.line_user_id || 'Unknown';
-      if (!summaryMap[name]) summaryMap[name] = { total: 0, count: 0 };
-      summaryMap[name].total += r.amount || 0;
-      summaryMap[name].count += 1;
-    });
-
-    const sorted = Object.entries(summaryMap).sort((a, b) => b[1].total - a[1].total);
+  function renderSummary(summary) {
     const tbody = document.getElementById('summaryTable');
-
-    if (!sorted.length) {
+    if (!summary || !summary.length) {
       tbody.innerHTML = '<tr><td colspan="4" class="empty">ยังไม่มีรายการ</td></tr>';
       return;
     }
-
-    tbody.innerHTML = sorted.map(([name, s], i) => `<tr>
+    tbody.innerHTML = summary.map((s, i) => `<tr>
       <td>${i + 1}</td>
-      <td>${name}</td>
+      <td>${s.name}</td>
       <td>${s.count}</td>
       <td class="amount">${fmtMoney(s.total)}</td>
     </tr>`).join('');
   }
 
-  // ─── Realtime ─────────────────────────────────────────────────────────────────
-  db.channel('expenses-changes')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'expenses' }, (payload) => {
-      console.log('Realtime INSERT:', payload.new);
-      showToast(`🧾 ${payload.new.display_name || 'Someone'} เพิ่งบันทึกค่าใช้จ่าย ${fmtMoney(payload.new.amount)} บาท`);
-      loadData();
-    })
-    .subscribe();
-
-  // ─── Init ─────────────────────────────────────────────────────────────────────
+  // ─── Init + Auto-refresh ──────────────────────────────────────────────────────
   loadData();
-  // Refresh ทุก 60 วินาที ป้องกัน realtime หลุด
-  setInterval(loadData, 60000);
+  // Polling ทุก 10 วินาที (แทน Supabase realtime ที่ถูกบล็อคโดย RLS)
+  setInterval(loadData, 10000);
 </script>
 </body>
 </html>
