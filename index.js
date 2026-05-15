@@ -522,7 +522,7 @@ async function cmdHelp(replyTarget) {
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) =>
-  res.json({ status: 'ok', version: '2.0.0', features: ['project-categorization', 'image-storage', 'crud-api'] })
+  res.json({ status: 'ok', version: '2.0.1', fix: 'project-save-field-strip' })
 );
 
 // ─── API Endpoints ────────────────────────────────────────────────────────────
