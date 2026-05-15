@@ -596,7 +596,7 @@ async function cmdHelp(replyTarget) {
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) =>
-  res.json({ status: 'ok', version: '2.0.1', fix: 'project-save-field-strip' })
+  res.json({ status: 'ok', version: '2.0.2', features: ['image-storage-fixed', 'create-project-from-line'] })
 );
 
 // ─── API Endpoints ────────────────────────────────────────────────────────────
