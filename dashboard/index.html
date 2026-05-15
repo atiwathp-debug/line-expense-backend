@@ -4,28 +4,96 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Expense Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; color: #333; }
+
+    /* ── Header ── */
     header {
       background: #06c755;
       color: #fff;
-      padding: 16px 24px;
+      padding: 14px 24px;
       display: flex;
       align-items: center;
       gap: 12px;
       box-shadow: 0 2px 8px rgba(0,0,0,.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
-    header h1 { font-size: 1.3rem; }
-    .badge {
+    header h1 { font-size: 1.2rem; flex: 1; }
+    .badge-live {
+      display: inline-block;
+      width: 8px; height: 8px;
+      background: #fff;
+      border-radius: 50%;
+      margin-right: 6px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .live-badge {
       background: rgba(255,255,255,.25);
       border-radius: 99px;
       font-size: .75rem;
-      padding: 2px 10px;
+      padding: 3px 10px;
     }
-    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+
+    /* ── Tab Nav ── */
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      padding: 16px 24px 0;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .tab-btn {
+      padding: 10px 22px;
+      border: none;
+      border-radius: 10px 10px 0 0;
+      background: #e0e3e8;
+      color: #666;
+      font-size: .9rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background .2s, color .2s;
+    }
+    .tab-btn.active { background: #fff; color: #06c755; }
+    .tab-btn:hover:not(.active) { background: #d4d7dc; }
+
+    /* ── Container ── */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px 40px;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Controls bar ── */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 16px 0 12px;
+    }
+    .controls select, .controls input[type="month"] {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: .88rem;
+      background: #fff;
+      color: #333;
+    }
+    .controls label { font-size: .85rem; color: #666; margin-right: 4px; }
+
+    /* ── Metric Cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
     .card {
       background: #fff;
       border-radius: 12px;
@@ -35,27 +103,217 @@
     .card .label { font-size: .8rem; color: #888; margin-bottom: 8px; }
     .card .value { font-size: 1.8rem; font-weight: 700; color: #06c755; }
     .card .sub { font-size: .85rem; color: #555; margin-top: 4px; }
-    .section { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }
-    .section h2 { font-size: 1rem; margin-bottom: 14px; color: #444; border-left: 3px solid #06c755; padding-left: 10px; }
+
+    /* ── Section ── */
+    .section {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      margin-bottom: 20px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section-header h2 {
+      font-size: 1rem;
+      color: #444;
+      border-left: 3px solid #06c755;
+      padding-left: 10px;
+    }
+
+    /* ── Table ── */
     table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-    th { text-align: left; padding: 8px 10px; background: #f7f8fa; color: #666; font-weight: 600; border-bottom: 2px solid #eee; }
-    td { padding: 9px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    th {
+      text-align: left;
+      padding: 9px 10px;
+      background: #f7f8fa;
+      color: #666;
+      font-weight: 600;
+      border-bottom: 2px solid #eee;
+      white-space: nowrap;
+    }
+    td { padding: 9px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
-    .amount { font-weight: 700; color: #06c755; }
-    .badge-live {
+    tr:hover td { background: #fafcff; }
+    .amount { font-weight: 700; color: #06c755; white-space: nowrap; }
+    .empty { text-align: center; color: #aaa; padding: 36px; }
+
+    /* ── Badges ── */
+    .tag {
       display: inline-block;
-      width: 8px; height: 8px;
-      background: #06c755;
+      background: #e8f8ee;
+      color: #06c755;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: .78rem;
+      font-weight: 600;
+    }
+    .project-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: .78rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .project-dot {
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      margin-right: 6px;
-      animation: pulse 1.5s infinite;
+      flex-shrink: 0;
     }
-    @keyframes pulse {
-      0%,100% { opacity: 1; }
-      50% { opacity: .3; }
+
+    /* ── Action buttons ── */
+    .actions { display: flex; gap: 4px; }
+    .action-btn {
+      border: none;
+      border-radius: 6px;
+      padding: 5px 9px;
+      cursor: pointer;
+      font-size: .8rem;
+      transition: opacity .2s;
     }
-    .tag { background: #e8f8ee; color: #06c755; border-radius: 6px; padding: 2px 8px; font-size: .78rem; }
-    .empty { text-align: center; color: #aaa; padding: 30px; }
+    .action-btn:hover { opacity: .75; }
+    .btn-view { background: #e8f0fe; color: #1a73e8; }
+    .btn-edit { background: #fff4e0; color: #f09800; }
+    .btn-delete { background: #fce8e6; color: #d93025; }
+
+    /* ── Primary button ── */
+    .btn-primary {
+      background: #06c755;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 18px;
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .btn-primary:hover { background: #05b34c; }
+
+    /* ── Project Cards ── */
+    .project-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .project-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      border-top: 4px solid #06c755;
+    }
+    .project-card-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+    .project-card-stat { font-size: .85rem; color: #666; margin-top: 4px; }
+    .project-card-amount { font-size: 1.3rem; font-weight: 700; color: #06c755; margin-top: 8px; }
+
+    /* ── Summary Chart Area ── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns: 1fr; } }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+      padding: 16px;
+    }
+    .modal-overlay.hidden { display: none; }
+    .modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px;
+      width: 100%;
+      max-width: 520px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal h3 {
+      font-size: 1.1rem;
+      margin-bottom: 20px;
+      color: #333;
+      border-left: 3px solid #06c755;
+      padding-left: 10px;
+    }
+    .modal-close {
+      float: right;
+      background: none;
+      border: none;
+      font-size: 1.4rem;
+      cursor: pointer;
+      color: #999;
+      line-height: 1;
+      margin-top: -4px;
+    }
+    .modal-close:hover { color: #333; }
+
+    /* ── Form ── */
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: .85rem; color: #666; margin-bottom: 6px; font-weight: 600; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: .9rem;
+      font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      outline: none;
+      border-color: #06c755;
+      box-shadow: 0 0 0 2px rgba(6,199,85,.15);
+    }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .btn-cancel {
+      background: #f0f2f5;
+      color: #666;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 18px;
+      font-size: .88rem;
+      cursor: pointer;
+    }
+    .btn-cancel:hover { background: #e0e3e8; }
+
+    /* ── Detail modal specific ── */
+    .detail-row { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { width: 120px; flex-shrink: 0; font-size: .82rem; color: #888; font-weight: 600; padding-top: 1px; }
+    .detail-value { font-size: .9rem; color: #333; flex: 1; word-break: break-word; }
+    .receipt-img {
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 14px;
+      border: 1px solid #eee;
+      cursor: zoom-in;
+    }
+
+    /* ── Toast ── */
     #toast {
       position: fixed;
       bottom: 24px; right: 24px;
@@ -67,90 +325,601 @@
       display: none;
       z-index: 999;
       font-size: .9rem;
+      max-width: 320px;
     }
+    #toast.error { background: #d93025; }
   </style>
 </head>
 <body>
 
 <header>
-  <span style="font-size:1.5rem">🧾</span>
+  <span style="font-size:1.4rem">🧾</span>
   <h1>Expense Dashboard</h1>
-  <span class="badge"><span class="badge-live"></span>Realtime</span>
+  <span class="live-badge"><span class="badge-live"></span>Auto-refresh</span>
 </header>
 
+<!-- Tab Navigation -->
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('expenses')">รายการ</button>
+  <button class="tab-btn" onclick="switchTab('projects')">Projects</button>
+  <button class="tab-btn" onclick="switchTab('summary')">สรุป</button>
+</div>
+
 <div class="container">
-  <!-- Metric Cards -->
-  <div class="cards">
-    <div class="card">
-      <div class="label">💰 ยอดรวมเดือนนี้</div>
-      <div class="value" id="total">0</div>
-      <div class="sub">บาท</div>
+
+  <!-- ══════════════════ TAB: รายการ ══════════════════ -->
+  <div id="tab-expenses" class="tab-panel active">
+    <div class="controls">
+      <div>
+        <label>เดือน</label>
+        <input type="month" id="monthPicker" />
+      </div>
+      <div>
+        <label>Project</label>
+        <select id="projectFilter">
+          <option value="">— ทุก Project —</option>
+        </select>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">📋 จำนวนรายการ</div>
-      <div class="value" id="count">0</div>
-      <div class="sub">รายการ</div>
+
+    <!-- Metric Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="label">💰 ยอดรวม</div>
+        <div class="value" id="total">0</div>
+        <div class="sub">บาท</div>
+      </div>
+      <div class="card">
+        <div class="label">📋 จำนวนรายการ</div>
+        <div class="value" id="count">0</div>
+        <div class="sub">รายการ</div>
+      </div>
+      <div class="card">
+        <div class="label">🏆 ใช้มากสุด</div>
+        <div class="value" id="topUser" style="font-size:1.1rem;margin-top:4px">—</div>
+        <div class="sub" id="topAmount"></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">🏆 ใช้มากสุด</div>
-      <div class="value" id="topUser" style="font-size:1.1rem;margin-top:4px">—</div>
-      <div class="sub" id="topAmount"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <h2>รายการค่าใช้จ่าย</h2>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>เวลา</th>
+              <th>ชื่อ</th>
+              <th>ร้าน</th>
+              <th>Project</th>
+              <th>ยอด (บาท)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="expenseTable">
+            <tr><td colspan="6" class="empty">กำลังโหลด...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <!-- Latest Expenses -->
-  <div class="section">
-    <h2>รายการล่าสุด</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>เวลา</th>
-          <th>ชื่อ</th>
-          <th>ร้าน</th>
-          <th>รายการ</th>
-          <th>ยอด (บาท)</th>
-        </tr>
-      </thead>
-      <tbody id="expenseTable">
-        <tr><td colspan="5" class="empty">กำลังโหลด...</td></tr>
-      </tbody>
-    </table>
+  <!-- ══════════════════ TAB: Projects ══════════════════ -->
+  <div id="tab-projects" class="tab-panel">
+    <div class="controls">
+      <button class="btn-primary" onclick="openCreateProjectModal()">➕ สร้าง Project ใหม่</button>
+    </div>
+    <div id="projectCards" class="project-cards">
+      <div class="card"><div class="empty">กำลังโหลด...</div></div>
+    </div>
   </div>
 
-  <!-- Summary per person -->
-  <div class="section">
-    <h2>สรุปรายคน (เดือนนี้)</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>ชื่อ</th>
-          <th>จำนวนครั้ง</th>
-          <th>ยอดรวม (บาท)</th>
-        </tr>
-      </thead>
-      <tbody id="summaryTable">
-        <tr><td colspan="4" class="empty">กำลังโหลด...</td></tr>
-      </tbody>
-    </table>
+  <!-- ══════════════════ TAB: สรุป ══════════════════ -->
+  <div id="tab-summary" class="tab-panel">
+    <div class="controls">
+      <div>
+        <label>เดือน</label>
+        <input type="month" id="summaryMonthPicker" />
+      </div>
+    </div>
+    <div class="summary-grid">
+      <div class="section">
+        <div class="section-header"><h2>สรุปรายคน</h2></div>
+        <table>
+          <thead>
+            <tr><th>#</th><th>ชื่อ</th><th>ครั้ง</th><th>ยอดรวม (บาท)</th></tr>
+          </thead>
+          <tbody id="summaryTable">
+            <tr><td colspan="4" class="empty">กำลังโหลด...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="section">
+        <div class="section-header"><h2>สรุปรายProject</h2></div>
+        <table>
+          <thead>
+            <tr><th>Project</th><th>ครั้ง</th><th>ยอดรวม (บาท)</th></tr>
+          </thead>
+          <tbody id="projectSummaryTable">
+            <tr><td colspan="3" class="empty">กำลังโหลด...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ══════════════════ MODAL: Detail ══════════════════ -->
+<div id="detailModal" class="modal-overlay hidden">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
+    <h3>รายละเอียด</h3>
+    <div id="detailContent"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ MODAL: Edit ══════════════════ -->
+<div id="editModal" class="modal-overlay hidden">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('editModal')">&times;</button>
+    <h3>แก้ไขรายการ</h3>
+    <form id="editForm" onsubmit="submitEdit(event)">
+      <input type="hidden" id="editId" />
+      <div class="form-group">
+        <label>ชื่อร้าน</label>
+        <input type="text" id="editShopName" required />
+      </div>
+      <div class="form-group">
+        <label>ยอดเงิน (บาท)</label>
+        <input type="number" id="editAmount" step="0.01" min="0" required />
+      </div>
+      <div class="form-group">
+        <label>วันที่</label>
+        <input type="date" id="editDate" required />
+      </div>
+      <div class="form-group">
+        <label>Project</label>
+        <select id="editProject">
+          <option value="">— ไม่ระบุ Project —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>รายการ (คั่นด้วยคอมมา)</label>
+        <textarea id="editItems" placeholder="รายการ1, รายการ2, ..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('editModal')">ยกเลิก</button>
+        <button type="submit" class="btn-primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════ MODAL: Create Project ══════════════════ -->
+<div id="createProjectModal" class="modal-overlay hidden">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('createProjectModal')">&times;</button>
+    <h3>สร้าง Project ใหม่</h3>
+    <form id="createProjectForm" onsubmit="submitCreateProject(event)">
+      <div class="form-group">
+        <label>ชื่อ Project <span style="color:#d93025">*</span></label>
+        <input type="text" id="newProjectName" placeholder="เช่น การตลาด, ค่าเดินทาง" required />
+      </div>
+      <div class="form-group">
+        <label>คำอธิบาย (ไม่บังคับ)</label>
+        <input type="text" id="newProjectDesc" placeholder="อธิบายสั้นๆ" />
+      </div>
+      <div class="form-group">
+        <label>สี</label>
+        <input type="color" id="newProjectColor" value="#06c755" style="width:60px;height:36px;padding:2px;border-radius:6px;border:1px solid #ddd;cursor:pointer" />
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('createProjectModal')">ยกเลิก</button>
+        <button type="submit" class="btn-primary">สร้าง Project</button>
+      </div>
+    </form>
   </div>
 </div>
 
 <div id="toast"></div>
 
 <script>
-  // ─── API base (ดึงข้อมูลจาก Railway backend — ใช้ Service Key ฝั่ง server) ────
   const API_BASE = window.location.origin;
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────────
-  function currentYearMonth() {
+  // ─── State ────────────────────────────────────────────────────────────────────
+  let allExpenses = [];
+  let allProjects = [];
+  let lastExpenseCount = 0;
+  let currentTab = 'expenses';
+
+  // ─── Init ─────────────────────────────────────────────────────────────────────
+  (function init() {
     const now = new Date();
-    return {
-      year: now.getFullYear(),
-      month: now.getMonth() + 1,
-    };
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('monthPicker').value = ym;
+    document.getElementById('summaryMonthPicker').value = ym;
+
+    document.getElementById('monthPicker').addEventListener('change', () => loadExpenses());
+    document.getElementById('summaryMonthPicker').addEventListener('change', () => loadSummary());
+    document.getElementById('projectFilter').addEventListener('change', () => renderExpenses());
+
+    loadAll();
+    setInterval(loadAll, 10000);
+  })();
+
+  async function loadAll() {
+    await Promise.all([loadProjects(), loadExpenses()]);
+    if (currentTab === 'summary') loadSummary();
   }
 
+  // ─── Tab switching ────────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(`tab-${tab}`).classList.add('active');
+    document.querySelectorAll('.tab-btn')[['expenses','projects','summary'].indexOf(tab)].classList.add('active');
+
+    if (tab === 'summary') loadSummary();
+    if (tab === 'projects') renderProjectCards();
+  }
+
+  // ─── Projects ─────────────────────────────────────────────────────────────────
+  async function loadProjects() {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`);
+      allProjects = await res.json();
+      if (!Array.isArray(allProjects)) { allProjects = []; return; }
+
+      // Update project filter dropdown
+      const filter = document.getElementById('projectFilter');
+      const current = filter.value;
+      filter.innerHTML = '<option value="">— ทุก Project —</option>' +
+        allProjects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+      filter.value = current;
+
+      // Update edit modal select
+      const editSel = document.getElementById('editProject');
+      const editCurrent = editSel.value;
+      editSel.innerHTML = '<option value="">— ไม่ระบุ Project —</option>' +
+        allProjects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+      editSel.value = editCurrent;
+
+      if (currentTab === 'projects') renderProjectCards();
+    } catch (err) {
+      console.error('[DEBUG] loadProjects error:', err);
+    }
+  }
+
+  function renderProjectCards() {
+    const container = document.getElementById('projectCards');
+    if (!allProjects.length) {
+      container.innerHTML = '<div class="card"><div class="empty">ยังไม่มี Project<br>สร้างด้วยปุ่มด้านบน</div></div>';
+      return;
+    }
+
+    // Build expense stats per project from current loaded expenses
+    const statsMap = {};
+    allExpenses.forEach(e => {
+      const pid = e.project_id || '__none__';
+      if (!statsMap[pid]) statsMap[pid] = { count: 0, total: 0 };
+      statsMap[pid].count += 1;
+      statsMap[pid].total += e.amount || 0;
+    });
+
+    container.innerHTML = allProjects.map(p => {
+      const stats = statsMap[p.id] || { count: 0, total: 0 };
+      const color = p.color || '#06c755';
+      return `<div class="project-card" style="border-top-color:${escHtml(color)}">
+        <div class="project-card-name">
+          <span class="project-dot" style="background:${escHtml(color)}"></span>
+          ${escHtml(p.name)}
+        </div>
+        ${p.description ? `<div style="font-size:.82rem;color:#888;margin-bottom:6px">${escHtml(p.description)}</div>` : ''}
+        <div class="project-card-stat">${stats.count} รายการ (เดือนที่เลือก)</div>
+        <div class="project-card-amount">${fmtMoney(stats.total)} บาท</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ─── Expenses ─────────────────────────────────────────────────────────────────
+  async function loadExpenses() {
+    const [year, month] = document.getElementById('monthPicker').value.split('-');
+    try {
+      const res = await fetch(`${API_BASE}/api/expenses?year=${year}&month=${month}`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+
+      if (lastExpenseCount > 0 && data.length > lastExpenseCount) {
+        const newest = data[0];
+        showToast(`🧾 ${newest.display_name || 'Someone'} เพิ่งบันทึก ${fmtMoney(newest.amount)} บาท`);
+      }
+      lastExpenseCount = data.length;
+      allExpenses = data;
+
+      renderMetrics();
+      renderExpenses();
+      if (currentTab === 'projects') renderProjectCards();
+    } catch (err) {
+      console.error('[DEBUG] loadExpenses error:', err);
+    }
+  }
+
+  function renderMetrics() {
+    const filtered = getFilteredExpenses();
+    const total = filtered.reduce((s, r) => s + (r.amount || 0), 0);
+    document.getElementById('total').textContent = fmtMoney(total);
+    document.getElementById('count').textContent = filtered.length;
+
+    // per-person aggregation
+    const personMap = {};
+    filtered.forEach(r => {
+      const n = r.display_name || r.line_user_id || '?';
+      personMap[n] = (personMap[n] || 0) + (r.amount || 0);
+    });
+    const sorted = Object.entries(personMap).sort((a, b) => b[1] - a[1]);
+    if (sorted.length) {
+      document.getElementById('topUser').textContent = sorted[0][0];
+      document.getElementById('topAmount').textContent = fmtMoney(sorted[0][1]) + ' บาท';
+    } else {
+      document.getElementById('topUser').textContent = '—';
+      document.getElementById('topAmount').textContent = '';
+    }
+  }
+
+  function getFilteredExpenses() {
+    const pid = document.getElementById('projectFilter').value;
+    if (!pid) return allExpenses;
+    return allExpenses.filter(e => e.project_id === pid);
+  }
+
+  function renderExpenses() {
+    const tbody = document.getElementById('expenseTable');
+    const data = getFilteredExpenses();
+
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">ยังไม่มีรายการ</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.slice(0, 100).map(r => {
+      const project = allProjects.find(p => p.id === r.project_id);
+      const projectBadge = project
+        ? `<span class="project-badge" style="background:${hexToAlpha(project.color||'#06c755',.12)};color:${project.color||'#06c755'}">
+             <span class="project-dot" style="background:${project.color||'#06c755'}"></span>
+             ${escHtml(project.name)}
+           </span>`
+        : '<span style="color:#bbb;font-size:.8rem">—</span>';
+
+      return `<tr>
+        <td style="white-space:nowrap">${fmtTime(r.created_at)}</td>
+        <td>${escHtml(r.display_name || '—')}</td>
+        <td><span class="tag">${escHtml(r.shop_name || '—')}</span></td>
+        <td>${projectBadge}</td>
+        <td class="amount">${fmtMoney(r.amount)}</td>
+        <td>
+          <div class="actions">
+            <button class="action-btn btn-view" title="ดูรายละเอียด" onclick="openDetailModal('${r.id}')">👁 ดู</button>
+            <button class="action-btn btn-edit" title="แก้ไข" onclick="openEditModal('${r.id}')">✏️ แก้ไข</button>
+            <button class="action-btn btn-delete" title="ลบ" onclick="confirmDelete('${r.id}', '${escAttr(r.shop_name)}')">🗑 ลบ</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ─── Summary Tab ──────────────────────────────────────────────────────────────
+  async function loadSummary() {
+    const [year, month] = document.getElementById('summaryMonthPicker').value.split('-');
+
+    try {
+      const res = await fetch(`${API_BASE}/api/expenses?year=${year}&month=${month}`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+
+      // Per-person
+      const personMap = {};
+      data.forEach(r => {
+        const n = r.display_name || r.line_user_id || '?';
+        if (!personMap[n]) personMap[n] = { count: 0, total: 0 };
+        personMap[n].count += 1;
+        personMap[n].total += r.amount || 0;
+      });
+      const personSorted = Object.entries(personMap).sort((a, b) => b[1].total - a[1].total);
+
+      const stbody = document.getElementById('summaryTable');
+      if (!personSorted.length) {
+        stbody.innerHTML = '<tr><td colspan="4" class="empty">ยังไม่มีรายการ</td></tr>';
+      } else {
+        stbody.innerHTML = personSorted.map(([name, s], i) => `<tr>
+          <td>${i + 1}</td>
+          <td>${escHtml(name)}</td>
+          <td>${s.count}</td>
+          <td class="amount">${fmtMoney(s.total)}</td>
+        </tr>`).join('');
+      }
+
+      // Per-project
+      const projMap = {};
+      data.forEach(r => {
+        const pid = r.project_id || '__none__';
+        if (!projMap[pid]) projMap[pid] = { count: 0, total: 0 };
+        projMap[pid].count += 1;
+        projMap[pid].total += r.amount || 0;
+      });
+      const projSorted = Object.entries(projMap).sort((a, b) => b[1].total - a[1].total);
+
+      const ptbody = document.getElementById('projectSummaryTable');
+      if (!projSorted.length) {
+        ptbody.innerHTML = '<tr><td colspan="3" class="empty">ยังไม่มีรายการ</td></tr>';
+      } else {
+        ptbody.innerHTML = projSorted.map(([pid, s]) => {
+          const proj = allProjects.find(p => p.id === pid);
+          const badge = proj
+            ? `<span class="project-badge" style="background:${hexToAlpha(proj.color||'#06c755',.12)};color:${proj.color||'#06c755'}">
+                 <span class="project-dot" style="background:${proj.color||'#06c755'}"></span>${escHtml(proj.name)}
+               </span>`
+            : '<span style="color:#bbb">ไม่ระบุ</span>';
+          return `<tr>
+            <td>${badge}</td>
+            <td>${s.count}</td>
+            <td class="amount">${fmtMoney(s.total)}</td>
+          </tr>`;
+        }).join('');
+      }
+    } catch (err) {
+      console.error('[DEBUG] loadSummary error:', err);
+    }
+  }
+
+  // ─── Detail Modal ─────────────────────────────────────────────────────────────
+  async function openDetailModal(id) {
+    const expense = allExpenses.find(e => e.id === id);
+    if (!expense) return;
+
+    const project = allProjects.find(p => p.id === expense.project_id);
+    const projectBadge = project
+      ? `<span class="project-badge" style="background:${hexToAlpha(project.color||'#06c755',.12)};color:${project.color||'#06c755'};font-size:.85rem">
+           <span class="project-dot" style="background:${project.color||'#06c755'}"></span>${escHtml(project.name)}
+         </span>`
+      : '—';
+
+    const items = Array.isArray(expense.items)
+      ? expense.items.join(', ')
+      : (expense.items || '—');
+
+    document.getElementById('detailContent').innerHTML = `
+      <div class="detail-row"><div class="detail-label">ชื่อร้าน</div><div class="detail-value">${escHtml(expense.shop_name || '—')}</div></div>
+      <div class="detail-row"><div class="detail-label">ยอดเงิน</div><div class="detail-value amount">${fmtMoney(expense.amount)} บาท</div></div>
+      <div class="detail-row"><div class="detail-label">วันที่</div><div class="detail-value">${expense.expense_date || '—'}</div></div>
+      <div class="detail-row"><div class="detail-label">Project</div><div class="detail-value">${projectBadge}</div></div>
+      <div class="detail-row"><div class="detail-label">รายการ</div><div class="detail-value">${escHtml(items)}</div></div>
+      <div class="detail-row"><div class="detail-label">ผู้บันทึก</div><div class="detail-value">${escHtml(expense.display_name || '—')}</div></div>
+      <div class="detail-row"><div class="detail-label">เวลาบันทึก</div><div class="detail-value">${fmtTime(expense.created_at)}</div></div>
+      ${expense.raw_text ? `<div class="detail-row"><div class="detail-label">ข้อความ OCR</div><div class="detail-value" style="font-size:.8rem;color:#888">${escHtml(expense.raw_text)}</div></div>` : ''}
+      ${expense.image_url ? `<img class="receipt-img" src="${escHtml(expense.image_url)}" alt="ใบเสร็จ" onclick="window.open('${escAttr(expense.image_url)}','_blank')" />` : ''}
+    `;
+
+    document.getElementById('detailModal').classList.remove('hidden');
+  }
+
+  // ─── Edit Modal ───────────────────────────────────────────────────────────────
+  function openEditModal(id) {
+    const expense = allExpenses.find(e => e.id === id);
+    if (!expense) return;
+
+    document.getElementById('editId').value = id;
+    document.getElementById('editShopName').value = expense.shop_name || '';
+    document.getElementById('editAmount').value = expense.amount || 0;
+    document.getElementById('editDate').value = expense.expense_date || '';
+    document.getElementById('editProject').value = expense.project_id || '';
+
+    const items = Array.isArray(expense.items)
+      ? expense.items.join(', ')
+      : (expense.items || '');
+    document.getElementById('editItems').value = items;
+
+    document.getElementById('editModal').classList.remove('hidden');
+  }
+
+  async function submitEdit(e) {
+    e.preventDefault();
+    const id = document.getElementById('editId').value;
+    const body = {
+      shop_name: document.getElementById('editShopName').value.trim(),
+      amount: parseFloat(document.getElementById('editAmount').value),
+      expense_date: document.getElementById('editDate').value,
+      project_id: document.getElementById('editProject').value || null,
+      items: document.getElementById('editItems').value,
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/expenses/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Update failed');
+
+      closeModal('editModal');
+      showToast('แก้ไขรายการสำเร็จ');
+      await loadExpenses();
+    } catch (err) {
+      console.error('[DEBUG] submitEdit error:', err);
+      showToast('แก้ไขไม่สำเร็จ: ' + err.message, true);
+    }
+  }
+
+  // ─── Delete ───────────────────────────────────────────────────────────────────
+  async function confirmDelete(id, shopName) {
+    if (!confirm(`ลบรายการ "${shopName}" ใช่ไหม?`)) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/expenses/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Delete failed');
+      }
+      showToast('ลบรายการสำเร็จ');
+      await loadExpenses();
+    } catch (err) {
+      console.error('[DEBUG] confirmDelete error:', err);
+      showToast('ลบไม่สำเร็จ: ' + err.message, true);
+    }
+  }
+
+  // ─── Create Project Modal ─────────────────────────────────────────────────────
+  function openCreateProjectModal() {
+    document.getElementById('newProjectName').value = '';
+    document.getElementById('newProjectDesc').value = '';
+    document.getElementById('newProjectColor').value = '#06c755';
+    document.getElementById('createProjectModal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('newProjectName').focus(), 100);
+  }
+
+  async function submitCreateProject(e) {
+    e.preventDefault();
+    const body = {
+      name: document.getElementById('newProjectName').value.trim(),
+      description: document.getElementById('newProjectDesc').value.trim() || null,
+      color: document.getElementById('newProjectColor').value,
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Create failed');
+
+      closeModal('createProjectModal');
+      showToast(`สร้าง Project "${body.name}" สำเร็จ`);
+      await loadProjects();
+      renderProjectCards();
+    } catch (err) {
+      console.error('[DEBUG] submitCreateProject error:', err);
+      showToast('สร้างไม่สำเร็จ: ' + err.message, true);
+    }
+  }
+
+  // ─── Modal helpers ────────────────────────────────────────────────────────────
+  function closeModal(id) {
+    document.getElementById(id).classList.add('hidden');
+  }
+
+  // Close modal on overlay click
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.add('hidden');
+    });
+  });
+
+  // ─── Utility functions ────────────────────────────────────────────────────────
   function fmtMoney(n) {
     return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -161,96 +930,30 @@
     return d.toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
   }
 
-  function showToast(msg) {
+  function escHtml(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function escAttr(str) {
+    return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Convert hex color + alpha to rgba string for badge backgrounds
+  function hexToAlpha(hex, alpha) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function showToast(msg, isError = false) {
     const el = document.getElementById('toast');
     el.textContent = msg;
+    el.className = isError ? 'error' : '';
     el.style.display = 'block';
-    setTimeout(() => { el.style.display = 'none'; }, 3500);
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => { el.style.display = 'none'; }, 3500);
   }
-
-  // ─── Load & Render ────────────────────────────────────────────────────────────
-  let lastCount = 0;
-
-  async function loadData() {
-    const { year, month } = currentYearMonth();
-
-    try {
-      // ดึงรายการทั้งหมดจาก Railway API (ใช้ Service Key ฝั่ง server)
-      const [expRes, sumRes] = await Promise.all([
-        fetch(`${API_BASE}/api/expenses?year=${year}&month=${month}`),
-        fetch(`${API_BASE}/api/summary`),
-      ]);
-
-      const expenses = await expRes.json();
-      const summary  = await sumRes.json();
-
-      if (!Array.isArray(expenses)) { console.error('API error:', expenses); return; }
-
-      // แจ้งเตือน realtime เมื่อมีรายการใหม่
-      if (lastCount > 0 && expenses.length > lastCount) {
-        const newest = expenses[0];
-        showToast(`🧾 ${newest.display_name || 'Someone'} เพิ่งบันทึก ${fmtMoney(newest.amount)} บาท`);
-      }
-      lastCount = expenses.length;
-
-      renderMetrics(expenses, summary);
-      renderExpenses(expenses);
-      renderSummary(summary);
-    } catch (err) {
-      console.error('loadData error:', err);
-    }
-  }
-
-  function renderMetrics(expenses, summary) {
-    const total = expenses.reduce((s, r) => s + (r.amount || 0), 0);
-    document.getElementById('total').textContent = fmtMoney(total);
-    document.getElementById('count').textContent = expenses.length;
-
-    if (summary && summary.length) {
-      document.getElementById('topUser').textContent = summary[0].name;
-      document.getElementById('topAmount').textContent = fmtMoney(summary[0].total) + ' บาท';
-    } else {
-      document.getElementById('topUser').textContent = '—';
-      document.getElementById('topAmount').textContent = '';
-    }
-  }
-
-  function renderExpenses(data) {
-    const tbody = document.getElementById('expenseTable');
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">ยังไม่มีรายการ</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.slice(0, 50).map((r) => {
-      const items = Array.isArray(r.items) ? r.items.join(', ') : (r.items || '—');
-      return `<tr>
-        <td>${fmtTime(r.created_at)}</td>
-        <td>${r.display_name || '—'}</td>
-        <td><span class="tag">${r.shop_name || '—'}</span></td>
-        <td style="max-width:220px;word-break:break-word">${items}</td>
-        <td class="amount">${fmtMoney(r.amount)}</td>
-      </tr>`;
-    }).join('');
-  }
-
-  function renderSummary(summary) {
-    const tbody = document.getElementById('summaryTable');
-    if (!summary || !summary.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">ยังไม่มีรายการ</td></tr>';
-      return;
-    }
-    tbody.innerHTML = summary.map((s, i) => `<tr>
-      <td>${i + 1}</td>
-      <td>${s.name}</td>
-      <td>${s.count}</td>
-      <td class="amount">${fmtMoney(s.total)}</td>
-    </tr>`).join('');
-  }
-
-  // ─── Init + Auto-refresh ──────────────────────────────────────────────────────
-  loadData();
-  // Polling ทุก 10 วินาที (แทน Supabase realtime ที่ถูกบล็อคโดย RLS)
-  setInterval(loadData, 10000);
 </script>
 </body>
 </html>

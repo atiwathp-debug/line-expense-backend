@@ -18,15 +18,17 @@ const lineConfig = {
 const lineClient = new line.messagingApi.MessagingApiClient({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
 });
-const lineBlobClient = new line.messagingApi.MessagingApiBlobClient({
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-});
 
 // ─── Supabase Client ──────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+// ─── In-memory pending expense store ─────────────────────────────────────────
+// Key: line_user_id
+// Value: { expense, imageUrl, replyTarget, groupId, displayName }
+const pendingExpenses = new Map();
 
 // ─── Webhook (LINE signature verification) ───────────────────────────────────
 app.post(
@@ -63,7 +65,8 @@ async function handleEvent(event) {
 async function handleImageMessage(event, userId, groupId, replyTarget) {
   console.log('[INFO] Image received — userId:', userId);
 
-  // ดึงรูปจาก LINE ผ่าน axios โดยตรง (reliable กว่า SDK wrapper)
+  // ดึงรูปจาก LINE ผ่าน axios โดยตรง
+  let imageBuffer;
   let imageBase64;
   try {
     const response = await axios.get(
@@ -74,7 +77,8 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
         timeout: 10000,
       }
     );
-    imageBase64 = Buffer.from(response.data).toString('base64');
+    imageBuffer = Buffer.from(response.data);
+    imageBase64 = imageBuffer.toString('base64');
     console.log('[INFO] Image downloaded — size:', response.data.byteLength, 'bytes');
   } catch (err) {
     console.error('[ERROR] download image:', err.response?.status, err.message);
@@ -108,9 +112,11 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
     console.warn('[WARN] getProfile failed:', err.message);
   }
 
-  // บันทึกลง Supabase
+  // อัปโหลดรูปไป Supabase Storage
+  const imageUrl = await uploadReceiptImage(imageBuffer, userId);
+
   const expenseDate = parsed.date || new Date().toISOString().split('T')[0];
-  const { error: dbError } = await supabase.from('expenses').insert({
+  const expenseData = {
     line_user_id: userId,
     line_group_id: groupId,
     display_name: displayName,
@@ -119,8 +125,118 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
     amount: parseFloat(parsed.amount) || 0,
     expense_date: expenseDate,
     raw_text: parsed.raw_text || '',
+    image_url: imageUrl,
     created_at: new Date().toISOString(),
+  };
+
+  // ดึง projects จาก DB เพื่อทำ Quick Reply
+  const { data: projects, error: projectsError } = await supabase
+    .from('projects')
+    .select('id, name')
+    .order('name', { ascending: true });
+
+  if (projectsError) {
+    console.error('[ERROR] fetch projects:', projectsError.message);
+  }
+
+  // ถ้าไม่มี project เลย ให้บันทึกทันที โดยไม่ต้องถาม
+  if (!projects || projects.length === 0) {
+    await saveExpense({ ...expenseData, project_id: null }, replyTarget, displayName, parsed);
+    await pushText(replyTarget, '💡 ยังไม่มี Project ในระบบ สามารถสร้างได้ด้วยคำสั่ง /addproject ชื่อProject');
+    return;
+  }
+
+  // เก็บ pending expense ไว้รอ user เลือก project
+  // ถ้า user ส่งรูปใหม่ก่อนเลือก project จะ overwrite entry เดิม
+  pendingExpenses.set(userId, {
+    expense: expenseData,
+    replyTarget,
+    groupId,
+    displayName,
+    parsed,
   });
+
+  // สร้าง Quick Reply buttons (LINE รองรับสูงสุด 13 items)
+  const maxProjectButtons = 12; // เผื่อ 1 slot สำหรับ "ไม่ระบุ Project"
+  const projectButtons = projects.slice(0, maxProjectButtons).map((p) => ({
+    type: 'action',
+    action: {
+      type: 'message',
+      label: `📁 ${p.name}`.substring(0, 20), // LINE label max 20 chars
+      text: `📁 ${p.name}`,
+    },
+  }));
+
+  projectButtons.push({
+    type: 'action',
+    action: {
+      type: 'message',
+      label: 'ไม่ระบุ Project',
+      text: 'ไม่ระบุ Project',
+    },
+  });
+
+  const itemList = Array.isArray(parsed.items) && parsed.items.length
+    ? parsed.items.map((i) => `  • ${i}`).join('\n')
+    : '  • (ไม่มีรายการ)';
+
+  const previewMsg =
+    `🧾 วิเคราะห์ใบเสร็จแล้ว\n\n` +
+    `🏪 ร้าน: ${parsed.shop_name || 'ไม่ระบุ'}\n` +
+    `📋 รายการ:\n${itemList}\n` +
+    `💰 ยอดรวม: ${Number(parsed.amount || 0).toLocaleString()} บาท\n` +
+    `📅 วันที่: ${expenseDate}\n\n` +
+    `ค่าใช้จ่ายนี้เป็นของ Project ไหน?`;
+
+  try {
+    await lineClient.pushMessage({
+      to: replyTarget,
+      messages: [
+        {
+          type: 'text',
+          text: previewMsg,
+          quickReply: {
+            items: projectButtons,
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    console.error('[ERROR] pushMessage with quickReply:', err.message);
+    // Fallback: บันทึกโดยไม่มี project
+    pendingExpenses.delete(userId);
+    await saveExpense({ ...expenseData, project_id: null }, replyTarget, displayName, parsed);
+  }
+}
+
+// ─── Upload receipt image to Supabase Storage ────────────────────────────────
+async function uploadReceiptImage(imageBuffer, userId) {
+  const filename = `${userId}_${Date.now()}.jpg`;
+  const uploadUrl = `${process.env.SUPABASE_URL}/storage/v1/object/receipts/${filename}`;
+
+  try {
+    await axios.post(uploadUrl, imageBuffer, {
+      headers: {
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'image/jpeg',
+        'x-upsert': 'true',
+      },
+      timeout: 15000,
+    });
+
+    const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/receipts/${filename}`;
+    console.log('[INFO] Image uploaded to Storage:', publicUrl);
+    return publicUrl;
+  } catch (err) {
+    // การ upload รูปล้มเหลวไม่ควรหยุด flow หลัก
+    console.error('[ERROR] Storage upload:', err.response?.status, err.response?.data || err.message);
+    return null;
+  }
+}
+
+// ─── Save expense to Supabase and send confirmation ──────────────────────────
+async function saveExpense(expenseData, replyTarget, displayName, parsed) {
+  const { error: dbError } = await supabase.from('expenses').insert(expenseData);
 
   if (dbError) {
     console.error('[ERROR] Supabase insert:', dbError.message);
@@ -128,20 +244,22 @@ async function handleImageMessage(event, userId, groupId, replyTarget) {
     return;
   }
 
-  console.log('[INFO] Saved to DB — shop:', parsed.shop_name, 'amount:', parsed.amount);
+  console.log('[INFO] Saved to DB — shop:', expenseData.shop_name, 'amount:', expenseData.amount);
 
-  // ตอบกลับ
   const itemList = Array.isArray(parsed.items) && parsed.items.length
     ? parsed.items.map((i) => `  • ${i}`).join('\n')
     : '  • (ไม่มีรายการ)';
 
+  const projectLabel = expenseData.project_id ? '' : '';
+
   const reply =
     `✅ บันทึกค่าใช้จ่ายแล้ว!\n\n` +
     `👤 ${displayName}\n` +
-    `🏪 ร้าน: ${parsed.shop_name || 'ไม่ระบุ'}\n` +
+    `🏪 ร้าน: ${expenseData.shop_name || 'ไม่ระบุ'}\n` +
     `📋 รายการ:\n${itemList}\n` +
-    `💰 ยอดรวม: ${Number(parsed.amount || 0).toLocaleString()} บาท\n` +
-    `📅 วันที่: ${expenseDate}`;
+    `💰 ยอดรวม: ${Number(expenseData.amount || 0).toLocaleString()} บาท\n` +
+    `📅 วันที่: ${expenseData.expense_date}` +
+    (expenseData._projectName ? `\n📁 Project: ${expenseData._projectName}` : '');
 
   await pushText(replyTarget, reply);
 }
@@ -172,7 +290,6 @@ async function analyzeReceiptWithGemini(imageBase64, retryCount = 0) {
     console.log('[INFO] Gemini response received');
     const rawText = data.candidates[0].content.parts[0].text;
 
-    // ล้าง markdown code block ถ้ามี
     const cleaned = rawText
       .replace(/```json\s*/gi, '')
       .replace(/```\s*/g, '')
@@ -180,7 +297,6 @@ async function analyzeReceiptWithGemini(imageBase64, retryCount = 0) {
 
     return JSON.parse(cleaned);
   } catch (err) {
-    // Retry เมื่อ rate limit 429
     if (err.response?.status === 429 && retryCount < 1) {
       console.warn('[WARN] Gemini 429 — retrying in 2s...');
       await sleep(2000);
@@ -192,7 +308,14 @@ async function analyzeReceiptWithGemini(imageBase64, retryCount = 0) {
 
 // ─── Text Commands ────────────────────────────────────────────────────────────
 async function handleTextMessage(event, userId, groupId, replyTarget) {
-  const text = event.message.text.trim().toLowerCase();
+  const rawText = event.message.text.trim();
+  const text = rawText.toLowerCase();
+
+  // ตรวจสอบว่า user กำลังเลือก project สำหรับ pending expense
+  if (rawText === 'ไม่ระบุ Project' || rawText.startsWith('📁 ')) {
+    await handleProjectSelection(userId, rawText);
+    return;
+  }
 
   if (text === '/myexpense') {
     await cmdMyExpense(userId, replyTarget);
@@ -200,7 +323,100 @@ async function handleTextMessage(event, userId, groupId, replyTarget) {
     await cmdSummary(groupId, userId, replyTarget);
   } else if (text === '/help') {
     await cmdHelp(replyTarget);
+  } else if (text === '/projects') {
+    await cmdListProjects(replyTarget);
+  } else if (text.startsWith('/addproject ')) {
+    const projectName = rawText.substring('/addproject '.length).trim();
+    await cmdAddProject(projectName, replyTarget);
   }
+}
+
+// ─── Project selection handler ────────────────────────────────────────────────
+async function handleProjectSelection(userId, text) {
+  const pending = pendingExpenses.get(userId);
+  if (!pending) {
+    // ไม่มี pending expense — ไม่ต้องตอบอะไร (อาจเป็น message อื่นที่ขึ้นต้นด้วย 📁)
+    return;
+  }
+
+  const { expense, replyTarget, displayName, parsed } = pending;
+  pendingExpenses.delete(userId);
+
+  let projectId = null;
+  let projectName = null;
+
+  if (text !== 'ไม่ระบุ Project') {
+    // ตัด prefix "📁 " ออกเพื่อหา project name
+    const selectedName = text.replace(/^📁\s*/, '').trim();
+
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select('id, name')
+      .eq('name', selectedName)
+      .single();
+
+    if (error || !project) {
+      console.error('[ERROR] find project by name:', error?.message);
+      await pushText(replyTarget, `ไม่พบ Project "${selectedName}" กรุณาลองใหม่`);
+      return;
+    }
+
+    projectId = project.id;
+    projectName = project.name;
+  }
+
+  await saveExpense(
+    { ...expense, project_id: projectId, _projectName: projectName },
+    replyTarget,
+    displayName,
+    parsed
+  );
+}
+
+// ─── /projects command ────────────────────────────────────────────────────────
+async function cmdListProjects(replyTarget) {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('id, name, description')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('[ERROR] /projects query:', error.message);
+    await pushText(replyTarget, 'ดึงข้อมูล Project ไม่สำเร็จ');
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    await pushText(replyTarget, 'ยังไม่มี Project\nสร้างด้วยคำสั่ง: /addproject ชื่อProject');
+    return;
+  }
+
+  const lines = data.map((p) => `📁 ${p.name}${p.description ? ` — ${p.description}` : ''}`);
+  await pushText(replyTarget, `📋 รายการ Projects (${data.length} project)\n\n${lines.join('\n')}`);
+}
+
+// ─── /addproject command ──────────────────────────────────────────────────────
+async function cmdAddProject(name, replyTarget) {
+  if (!name) {
+    await pushText(replyTarget, 'กรุณาระบุชื่อ Project เช่น /addproject การตลาด');
+    return;
+  }
+
+  const { error } = await supabase.from('projects').insert({ name });
+
+  if (error) {
+    console.error('[ERROR] /addproject insert:', error.message);
+    // unique constraint violation
+    if (error.code === '23505') {
+      await pushText(replyTarget, `Project "${name}" มีอยู่แล้วในระบบ`);
+    } else {
+      await pushText(replyTarget, `สร้าง Project ไม่สำเร็จ: ${error.message}`);
+    }
+    return;
+  }
+
+  console.log('[INFO] Project created:', name);
+  await pushText(replyTarget, `✅ สร้าง Project "${name}" สำเร็จแล้ว!`);
 }
 
 async function cmdMyExpense(userId, replyTarget) {
@@ -241,7 +457,6 @@ async function cmdMyExpense(userId, replyTarget) {
 async function cmdSummary(groupId, userId, replyTarget) {
   const { year, month } = currentYearMonth();
 
-  // ถ้าอยู่ใน group ดึงของทั้งกลุ่ม ถ้าไม่ใช่ดึงของ user นั้น
   let query = supabase
     .from('expenses')
     .select('display_name, amount, line_user_id')
@@ -267,7 +482,6 @@ async function cmdSummary(groupId, userId, replyTarget) {
     return;
   }
 
-  // รวมยอดรายคน
   const summaryMap = {};
   data.forEach((r) => {
     const name = r.display_name || r.line_user_id;
@@ -298,18 +512,23 @@ async function cmdHelp(replyTarget) {
     '📷 ส่งรูปใบเสร็จ → บันทึกค่าใช้จ่ายอัตโนมัติ\n\n' +
     '/myexpense → ดูรายการค่าใช้จ่ายของคุณเดือนนี้\n' +
     '/summary → สรุปค่าใช้จ่ายทุกคนในกลุ่มเดือนนี้\n' +
+    '/projects → ดูรายการ Projects ทั้งหมด\n' +
+    '/addproject ชื่อ → สร้าง Project ใหม่\n' +
     '/help → แสดงคำสั่งทั้งหมด';
   await pushText(replyTarget, msg);
 }
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok', version: '851f36b', imageMethod: 'axios-direct', prompt: 'slip-aware' }));
+app.get('/health', (_req, res) =>
+  res.json({ status: 'ok', version: '2.0.0', features: ['project-categorization', 'image-storage', 'crud-api'] })
+);
 
-// ─── API Endpoints สำหรับ Dashboard ──────────────────────────────────────────
+// ─── API Endpoints ────────────────────────────────────────────────────────────
 app.use(express.json());
 
+// GET /api/expenses — list expenses with optional filters
 app.get('/api/expenses', async (req, res) => {
-  const { group_id, month, year } = req.query;
+  const { group_id, month, year, project_id } = req.query;
   const y = year || new Date().getFullYear();
   const m = month ? String(month).padStart(2, '0') : String(new Date().getMonth() + 1).padStart(2, '0');
 
@@ -321,12 +540,106 @@ app.get('/api/expenses', async (req, res) => {
     .order('created_at', { ascending: false });
 
   if (group_id) query = query.eq('line_group_id', group_id);
+  if (project_id) query = query.eq('project_id', project_id);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
+// GET /api/expenses/:id — get single expense
+app.get('/api/expenses/:id', async (req, res) => {
+  const { id } = req.params;
+
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (error) return res.status(404).json({ error: error.message });
+  res.json(data);
+});
+
+// PUT /api/expenses/:id — update expense
+app.put('/api/expenses/:id', async (req, res) => {
+  const { id } = req.params;
+  const { shop_name, amount, expense_date, project_id, items } = req.body;
+
+  const updates = {};
+  if (shop_name !== undefined) updates.shop_name = shop_name;
+  if (amount !== undefined) updates.amount = parseFloat(amount);
+  if (expense_date !== undefined) updates.expense_date = expense_date;
+  // Allow explicitly setting project_id to null (ไม่ระบุ project)
+  if (project_id !== undefined) updates.project_id = project_id || null;
+  if (items !== undefined) {
+    // Accept both array and comma-separated string
+    updates.items = Array.isArray(items)
+      ? items
+      : String(items).split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No fields to update' });
+  }
+
+  const { data, error } = await supabase
+    .from('expenses')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/expenses/:id — delete expense
+app.delete('/api/expenses/:id', async (req, res) => {
+  const { id } = req.params;
+
+  const { error } = await supabase.from('expenses').delete().eq('id', id);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// GET /api/projects — list all projects
+app.get('/api/projects', async (req, res) => {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('*')
+    .order('name', { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// POST /api/projects — create project
+app.post('/api/projects', async (req, res) => {
+  const { name, description, color } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Project name is required' });
+  }
+
+  const { data, error } = await supabase
+    .from('projects')
+    .insert({ name: name.trim(), description: description || null, color: color || '#06c755' })
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: `Project "${name}" already exists` });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.status(201).json(data);
+});
+
+// GET /api/summary — per-person summary for current month
 app.get('/api/summary', async (req, res) => {
   const { group_id } = req.query;
   const { year, month } = currentYearMonth();
